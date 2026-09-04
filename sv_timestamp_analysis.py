@@ -215,10 +215,11 @@ def compute_latency(pub_sv, sub_sv):
 
 
 def compute_latency_over_index(pub_sv, sub_sv):
-    """Compute latency values and their publisher SV indexes.
+    """Compute latency values and their SV counters.
 
-    The publisher iteration index is kept with each latency so that each
-    value remains associated with the SV that was emitted.
+    The SV counter is kept with each latency so that each value remains
+    associated with the SV that was emitted. The counter identifies the SV
+    within a test cycle; the iteration identifies the repeated PCAP cycle.
     """
     latencies = [[] for _ in range(len(pub_sv))]
     indexes = [[] for _ in range(len(pub_sv))]
@@ -236,10 +237,10 @@ def compute_latency_over_index(pub_sv, sub_sv):
             sub_data = pd.DataFrame(sub_sv_stream, index=columns).T
             merged_data = pd.merge(pub_data, sub_data, on=["iteration", "counter"], how="inner")
             latencies_stream[:] = np.asarray(merged_data["time_y"] - merged_data["time_x"])
-            indexes_stream[:] = np.asarray(merged_data["iteration"])
+            indexes_stream[:] = np.asarray(merged_data["counter"])
         else:
             latencies_stream[:] = sub_sv_stream[2] - pub_sv_stream[2]
-            indexes_stream[:] = pub_sv_stream[0]
+            indexes_stream[:] = pub_sv_stream[1]
 
     return latencies, indexes, sv_drop
 
@@ -358,7 +359,7 @@ def save_latency_histogram(df, stream, sub_name, output, threshold=0):
 
 
 def save_latency_over_index(latencies, indexes, stream, name, output, threshold=0):
-    """Save latency values against the SV iteration index for one stream."""
+    """Save latency values against the SV counter for one stream."""
     latencies = np.asarray(latencies).reshape(-1)
     indexes = np.asarray(indexes).reshape(-1)
 
@@ -368,9 +369,11 @@ def save_latency_over_index(latencies, indexes, stream, name, output, threshold=
     if latencies.size > 0:
         plt.scatter(indexes, latencies, s=4, alpha=0.7)
 
-    plt.xlabel("SV index")
+    if indexes.size > 0:
+        plt.xlim(0, np.max(indexes) + 1)
+    plt.xlabel("SV number in cycle")
     plt.ylabel("Latency (us)")
-    plt.title(f"{name} SV stream 0x{stream:04x} latency by SV index")
+    plt.title(f"{name} SV stream 0x{stream:04x} latency by SV number")
 
     if threshold > 0:
         plt.axhline(

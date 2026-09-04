@@ -56,9 +56,10 @@ After computation, results are available by default in current
 directory in `results` folder. You can override this setting using `-o`
 argument.
 A report is generated in .adoc format containing PNG histograms and
-latency-by-SV-index graphs for the computed SV streams. The graph uses the
-publisher iteration index on the X axis. On each stream, a latency threshold
-test is computed
+latency-by-SV-number graphs for the computed SV streams. The graph uses the
+SV counter on the X axis, with a range based on the values found in the input
+files. Repeated cycles are overlaid on the same graph. On each stream, a
+latency threshold test is computed
 based on the value of the `--ttot` argument (by default, 100µs).
 
 By default, only stream 0 is used to compute latencies. You can
