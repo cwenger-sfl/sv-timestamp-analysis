@@ -55,8 +55,10 @@ python3 sv_timestamp_analysis.py \
 After computation, results are available by default in current
 directory in `results` folder. You can override this setting using `-o`
 argument.
-A report is generated in .adoc format containing .png histogram of the SV
-streams computed. On each stream, a latency threshold test is computed
+A report is generated in .adoc format containing PNG histograms and
+latency-over-time graphs for the computed SV streams. The latency-over-time
+graph uses the publication timestamp as its elapsed-time reference. On each
+stream, a latency threshold test is computed
 based on the value of the `--ttot` argument (by default, 100µs).
 
 By default, only stream 0 is used to compute latencies. You can
