@@ -213,6 +213,36 @@ def compute_latency(pub_sv, sub_sv):
 
     return latencies, sv_drop
 
+
+def compute_latency_over_index(pub_sv, sub_sv):
+    """Compute latency values and their SV counters for each stream."""
+    latencies = [[] for _ in range(len(pub_sv))]
+    indexes = [[] for _ in range(len(pub_sv))]
+    sv_drop = 0
+
+    for pub_sv_stream, sub_sv_stream, latency_stream, index_stream in zip(
+        pub_sv, sub_sv, latencies, indexes, strict=True
+    ):
+        sv_drop_stream = abs(len(pub_sv_stream[0]) - len(sub_sv_stream[0]))
+        sv_drop += sv_drop_stream
+
+        if sv_drop_stream > 0:
+            columns = ["iteration", "counter", "time"]
+            pub_data = pd.DataFrame(pub_sv_stream, index=columns).T
+            sub_data = pd.DataFrame(sub_sv_stream, index=columns).T
+            merged_data = pd.merge(
+                pub_data, sub_data, on=["iteration", "counter"], how="inner"
+            )
+            latency_stream[:] = np.array(
+                merged_data["time_y"] - merged_data["time_x"]
+            )
+            index_stream[:] = np.array(merged_data["counter"])
+        else:
+            latency_stream[:] = sub_sv_stream[2] - pub_sv_stream[2]
+            index_stream[:] = pub_sv_stream[1]
+
+    return latencies, indexes, sv_drop
+
 def compute_pacing(sv, prepend=None):
     """Compute the pacing of some SV data.
 
@@ -325,6 +355,40 @@ def save_latency_histogram(df, stream, sub_name, output, threshold=0):
 
     return filepath
 
+
+def save_latency_over_index(latencies, indexes, stream, name, output, threshold=0):
+    """Save latency values plotted against their SV counter."""
+    latencies = np.asarray(latencies).reshape(-1)
+    indexes = np.asarray(indexes).reshape(-1)
+    if len(latencies) != len(indexes):
+        raise ValueError("Latency and SV counter arrays must have the same length")
+
+    plt.scatter(indexes, latencies, s=2)
+    plt.xlabel("SV number in cycle")
+    plt.ylabel("Latency (us)")
+    plt.title(f"{name} SV stream 0x{stream:04x} latency by SV number")
+
+    if threshold > 0:
+        plt.axhline(
+            y=threshold,
+            color="red",
+            linestyle="dashed",
+            linewidth=2,
+            label=f"Limit ({threshold} us)",
+        )
+        plt.legend()
+
+    if len(indexes) > 0:
+        plt.xlim(0, np.max(indexes) + 1)
+
+    filename = f"latency_over_index_{name}_stream_{stream}.png"
+    filepath = os.path.realpath(f"{output}/results/{filename}")
+    plt.savefig(filepath)
+    print(f"Latency-over-index graph saved as {filename}.")
+    plt.close()
+
+    return filepath
+
 def generate_adoc(pub, hyp, sub, streams, hyp_name, sub_name, output, max_latency_threshold, display_threshold, processing_window=100):
     if not os.path.exists(f'{output}/results'):
         os.makedirs(f'{output}/results')
@@ -339,6 +403,7 @@ def generate_adoc(pub, hyp, sub, streams, hyp_name, sub_name, output, max_latenc
             |{_stream_id_} |{_minlat_} us |{_maxlat_} us |{_avglat_} us
             |===
             image::./histogram_{_subscriber_name_}_stream_{_stream_}_latency.png[]
+            image::./latency_over_index_{_subscriber_name_}_stream_{_stream_}.png[]
             |===
             |IEC61850 Sampled Value Stream |Minimum pacing |Maximum pacing |Average pacing
             |{_stream_id_} |{_minpace_} us |{_maxpace_} us |{_avgpace_} us
@@ -355,6 +420,7 @@ def generate_adoc(pub, hyp, sub, streams, hyp_name, sub_name, output, max_latenc
             |{_stream_id_} |{_minlat_} us |{_maxlat_} us |{_avglat_} us
             |===
             image::./histogram_{_hypervisor_name_}_stream_{_stream_}_latency.png[]
+            image::./latency_over_index_{_hypervisor_name_}_stream_{_stream_}.png[]
             |===
             |IEC61850 Sampled Value Stream |Minimum pacing |Maximum pacing |Average pacing
             |{_stream_id_} |{_minpace_} us |{_maxpace_} us |{_avgpace_} us
@@ -386,12 +452,16 @@ def generate_adoc(pub, hyp, sub, streams, hyp_name, sub_name, output, max_latenc
         verify_sv_logs_consistency(pub, sub)
 
         latencies_df = [ pd.DataFrame({"latency": [], "count": []}) for _ in range(len(streams)) ]
+        latency_indexes = [[] for _ in range(len(streams))]
+        latency_values = [[] for _ in range(len(streams))]
         total_sv_drop = 0
         sub_pacing_df = [ pd.DataFrame({"pacing": [], "count": []}) for _ in range(len(streams)) ]
 
         if hyp is not None:
             verify_sv_logs_consistency(pub, hyp)
             hyp_latencies_df = [ pd.DataFrame({"latency": [], "count": []}) for _ in range(len(streams)) ] 
+            hyp_latency_indexes = [[] for _ in range(len(streams))]
+            hyp_latency_values = [[] for _ in range(len(streams))]
             hyp_total_sv_drop = 0
             hyp_pacing_df = [ pd.DataFrame({"pacing": [], "count": []}) for _ in range(len(streams)) ]
 
@@ -408,11 +478,17 @@ def generate_adoc(pub, hyp, sub, streams, hyp_name, sub_name, output, max_latenc
 
             while len(sub_stream_names) > 0:
                 # Latencies
-                chunk_latencies, sv_drop = compute_latency(pub_sv, sub_sv)
+                chunk_latencies, chunk_latency_indexes, sv_drop = compute_latency_over_index(pub_sv, sub_sv)
                 total_sv_drop += sv_drop
+                for i in range(len(streams)):
+                    latency_values[i].append(chunk_latencies[i])
+                    latency_indexes[i].append(chunk_latency_indexes[i])
                 if hyp is not None:
-                    chunk_hyp_latencies, hyp_sv_drop = compute_latency(pub_sv, hyp_sv)
+                    chunk_hyp_latencies, chunk_hyp_latency_indexes, hyp_sv_drop = compute_latency_over_index(pub_sv, hyp_sv)
                     hyp_total_sv_drop += hyp_sv_drop
+                    for i in range(len(streams)):
+                        hyp_latency_values[i].append(chunk_hyp_latencies[i])
+                        hyp_latency_indexes[i].append(chunk_hyp_latency_indexes[i])
 
                 for i in range(len(streams)):
                     latencies_df[i] = add_counts_to_df(latencies_df[i], chunk_latencies[i])
@@ -450,10 +526,29 @@ def generate_adoc(pub, hyp, sub, streams, hyp_name, sub_name, output, max_latenc
                     hyp_sv, hyp_stream_names = hyp_extractor.extract_sv(streams, processing_window)
 
         for i in range(len(streams)):
+            threshold = max_latency_threshold if display_threshold else 0
             if display_threshold:
-                save_latency_histogram(latencies_df[i], streams[i], sub_name, output, max_latency_threshold)
+                save_latency_histogram(latencies_df[i], streams[i], sub_name, output, threshold)
             else:
                 save_latency_histogram(latencies_df[i], streams[i], sub_name, output)
+            save_latency_over_index(
+                np.concatenate(latency_values[i]) if latency_values[i] else [],
+                np.concatenate(latency_indexes[i]) if latency_indexes[i] else [],
+                streams[i],
+                sub_name,
+                output,
+                threshold,
+            )
+            if hyp is not None:
+                save_latency_histogram(hyp_latencies_df[i], streams[i], hyp_name, output, threshold)
+                save_latency_over_index(
+                    np.concatenate(hyp_latency_values[i]) if hyp_latency_values[i] else [],
+                    np.concatenate(hyp_latency_indexes[i]) if hyp_latency_indexes[i] else [],
+                    streams[i],
+                    hyp_name,
+                    output,
+                    threshold,
+                )
 
         maxlat= compute_max(latencies_df[0]["latency"])
         minlat = compute_min(latencies_df[0]["latency"])
